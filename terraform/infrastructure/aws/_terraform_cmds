@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+
+COMMANDS=$(cat _terraform_cmds | grep "^function" | awk '{print $2}' | grep -v "^_" | tr "\n" " " )
+readonly STACK_FROM_INFRA="stack"
+readonly CONFIG_FROM_STACK="../../../../../../terraform-config/aws"
+APPLY_PLAN="apply.tfplan"
+DESTROY_PLAN="destroy.tfplan"
+STATE_REGION="eu-west-1"
+
+function _debug {
+    echo "${ACCOUNT_ID}" "${ENVIRONMENT}" "${REGION}" "${COMPONENT}" "${COMMAND}"
+}
+
+function _set_remote_state {
+    cd "${ACCOUNT_ID}/${STACK_FROM_INFRA}/${COMPONENT}" || exit
+    terraform init -upgrade \
+        -input=false \
+        -backend-config="bucket=${ACCOUNT_ID}-infrastructure-terraform" \
+        -backend-config="key=terraform-state/${ACCOUNT_ID}/${REGION}/${ENVIRONMENT}/${COMPONENT}/terraform.tfstate" \
+        -backend-config="region=${STATE_REGION}" \
+        -backend-config="dynamodb_table=${ACCOUNT_ID}-infrastructure-terraform" \
+        -backend-config="encrypt=true"
+}
+
+function get {
+    _set_remote_state
+    terraform get "$@"
+}
+
+function plan {
+    _set_remote_state
+    terraform plan \
+        -var-file "${CONFIG_FROM_STACK}/vars/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/${REGION}/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/${REGION}/${ENVIRONMENT}/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/${REGION}/${ENVIRONMENT}/${COMPONENT}/config.tfvars.json" \
+        -out "${APPLY_PLAN}" \
+        "$@"
+}
+
+function apply {
+    _set_remote_state
+    terraform apply "$@" "${APPLY_PLAN}"
+}
+
+function plan_destroy {
+    _set_remote_state
+    terraform plan -destroy \
+        -var-file "${CONFIG_FROM_STACK}/vars/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/${REGION}/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/${REGION}/${ENVIRONMENT}/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/${REGION}/${ENVIRONMENT}/${COMPONENT}/config.tfvars.json" \
+        -out "${DESTROY_PLAN}" \
+        "$@"
+}
+
+function destroy {
+    _set_remote_state
+    terraform apply "$@" "${DESTROY_PLAN}"
+}
+
+function import {
+    _set_remote_state
+    terraform import \
+        -var-file "${CONFIG_FROM_STACK}/vars/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/${REGION}/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/${REGION}/${ENVIRONMENT}/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/${REGION}/${ENVIRONMENT}/${COMPONENT}/config.tfvars.json" \
+        "$@"
+}
+
+function console {
+    _set_remote_state
+    terraform console \
+        -var-file "${CONFIG_FROM_STACK}/vars/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/${REGION}/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/${REGION}/${ENVIRONMENT}/common.tfvars.json" \
+        -var-file "${CONFIG_FROM_STACK}/vars/${ACCOUNT_ID}/${REGION}/${ENVIRONMENT}/${COMPONENT}/config.tfvars.json" \
+        "$@"
+}
+
+function rm_state {
+    _set_remote_state
+    terraform state rm "$@"
+}
+
+function output {
+    _set_remote_state
+    terraform output -json > ${COMPONENT}-outputs.json
+    aws s3 cp --sse AES256 ${COMPONENT}-outputs.json s3://${ACCOUNT_ID}-infrastructure-terraform/terraform-outputs/${ACCOUNT_ID}/${REGION}/${ENVIRONMENT}/${COMPONENT}/
+}
+
+function show_state {
+    _set_remote_state
+    terraform show "$@" terraform.tfstate
+}
+
+function list_state {
+    _set_remote_state
+    terraform state list "$@"
+}
+
+function move_state {
+    _set_remote_state
+    terraform state mv "$@"
+}

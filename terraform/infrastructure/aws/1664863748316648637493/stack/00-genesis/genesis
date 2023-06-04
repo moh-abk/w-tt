@@ -1,0 +1,189 @@
+#!/usr/bin/env bash -l
+
+##############################################################################
+# Shell Behaviour
+##############################################################################
+
+# Check for unbound variables being used
+# set -o nounset
+
+# Exit is a bad command is attempted. If you're going to handle errors then
+# leave this disabled
+# set -o errexit
+
+# Exit if any of the commands in a pipeline exit with a non-zero exit code
+# set -o pipefail
+
+##############################################################################
+# Variables
+##############################################################################
+
+CONST_COMMAND_LINE="$@"
+CONST_OS_VERSION=$(uname -r)
+CONST_SYSTEM_TYPE=$(uname -m)
+CONST_SCRIPT_NAME=${0##*/}
+CONST_SCRIPT_PATH=${0}
+CONST_SCRIPT_CALLER="${BASH_SOURCE[0]}"
+
+if [ -z ${CONST_SCRIPT_CALLER} ]; then
+    PROJECT_ROOT=$( cd "$( dirname "${CONST_SCRIPT_PATH}" )" && pwd )
+else
+    PROJECT_ROOT=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+fi
+
+STATES_DIR="${PROJECT_ROOT}/tfstates"
+PARAM_LIST=( ACCOUNT_ID )
+
+aws_account_id=$1
+
+##############################################################################
+# Functions
+#############################################################################
+
+# Simple function to remove file if it exists. Helps make readability better
+_remove_if_exists() {
+    local f="$1"
+    [ -e "${f}" ] && rm -f "${f}"
+}
+
+
+# Basic help-text function
+show_help() {
+
+echo "usage: "
+echo ""
+echo "$0 ${PARAM_LIST[*]}"
+    echo ""
+    echo account_id: "AWS Account ID"
+    exit 0
+}
+
+# Basic check for terraform in path
+_ensure_terraform_available() {
+
+    echo "Checking for Terraform"
+    tfpath="$(which terraform)"
+    if [[ "${tfpath}" == "" ]]; then
+        echo "Terraform binary not found. Check your PATH"
+        exit 1
+    fi
+    echo "Terraform binary found (${tfpath})"
+
+}
+
+# Basic terraform test for AWS access
+_get_current_account_number() {
+
+    echo "Testing Terraform access to AWS"
+    # We will test terraform access to AWS by extracting the AWS account number
+    terraform \
+        -chdir="${PROJECT_ROOT}/helpers/tf-get-aws-account-number" \
+        init
+    terraform \
+        -chdir="${PROJECT_ROOT}/helpers/tf-get-aws-account-number" \
+        apply \
+        -state-out="${STATES_DIR}/helper.tfstate" \
+        -input=true
+
+    [ $? -eq 0 ] || exit 1
+
+    aws_account_number=$(terraform output \
+        -state="${STATES_DIR}/helper.tfstate" \
+        account_id)
+
+    _remove_if_exists "${STATES_DIR}/helper.tfstate"
+    _remove_if_exists "${STATES_DIR}/helper.tfstate.backup"
+
+}
+
+
+_terraform_account() {
+
+    profile=$1
+
+    terraform init \
+      -backend-config="path=${STATES_DIR}/genesis_${aws_account_id}.tfstate"
+
+    echo "Executing Terraform Plan [nothing created]"
+    terraform plan \
+        -out "${STATES_DIR}/genesis_${aws_account_id}.tfplan"
+
+    # Don't continue if the plan failed
+    [ $? -eq 0 ] || exit 1
+
+    echo "Plan stored at ${STATES_DIR}/genesis_${aws_account_id}.tfplan"
+    echo "Do you want to apply the plan (y/n)?"
+    read -r REPLY
+
+    if [[ ! $REPLY =~ ^[Yy]$ ]]
+    then
+        exit 0
+    fi
+
+    echo "Terraforming..."
+    terraform apply \
+        "${STATES_DIR}/genesis_${aws_account_id}.tfplan"
+
+    _remove_if_exists "${STATES_DIR}/genesis_${aws_account_id}.tfplan"
+
+}
+
+
+_create_cleanup_helper() {
+
+    cat > "${PROJECT_ROOT}/account-cleanup-${aws_account_id}" <<EOF
+
+#!/bin/bash
+terraform destroy \\
+    -state="${STATES_DIR}/genesis_${aws_account_id}.tfstate"
+
+EOF
+    chmod +x "${PROJECT_ROOT}/account-cleanup-${aws_account_id}"
+
+}
+
+
+_show_summary() {
+
+    tfoutputs="$(terraform output -state="${STATES_DIR}/genesis_${aws_account_id}.tfstate" result)"
+    cat <<EOF
+
+# Terraform Resources
+
+${tfoutputs}
+
+# Cleanup
+
+    A cleanup script called 'account-cleanup-${aws_account_id}'
+    has been created as a convenience for removing resources managed by this repo.
+
+
+EOF
+
+}
+
+
+##############################################################################
+# Main Script
+##############################################################################
+# Show most common commands if no args are given
+if { [ -z "$1" ] && [ -t 0 ] ; }; then
+    show_help
+    exit 0
+fi
+
+# show help for no arguments if stdin is a terminal
+if [ "$1" == '-h' ] || [ "$1" == '--help' ] || [ "$1" == 'help' ]; then
+    show_help
+    exit 0
+fi
+
+_ensure_terraform_available
+
+_get_current_account_number
+
+_terraform_account
+
+_create_cleanup_helper
+
+_show_summary
