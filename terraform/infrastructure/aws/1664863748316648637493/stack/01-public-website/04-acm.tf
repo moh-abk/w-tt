@@ -20,5 +20,4 @@ module "public_website_s3_acm" {
   tag_operations_owner = var.tag_operations_owner
   tag_project_name     = var.tag_project_name
   tag_system_owner     = var.tag_system_owner
-  tag_service          = "public-website"
 }

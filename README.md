@@ -56,8 +56,18 @@ region: Deployment region
 commands: get plan apply plan_destroy destroy import console rm_state output show_state list_state move_state 
 ```
 
+### Running on CI
+
+A GitHub workflow has been created to `terraform plan` every pull request and `terraform plan and apply` for every
+push to the `main` branch.
+
+**PS: This has been commented out because no secrets have been added to the public repository.**
+
 ### Tasks completed
 
 - [x] The site should be served to the public.
 - [x] Add a custom error document.
 - [x] Automation of testing & deployment of infrastructure.
+- [x] Two marketing users Alice & Malory should have access to only add to the `/news` section
+- [x] Bobby the content editor needs to be able to edit the entire website.
+- [x] Charlie works in HR and should be able to update `/people.html`
